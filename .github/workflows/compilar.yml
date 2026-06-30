@@ -8,18 +8,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Clonar solo el Kernel de Artisan
+      - name: Clonar base de CyberInfintyKernel
         run: |
-          git clone --depth=1 -b sixteen https://github.com/dav-quez/ArtisanROM.git fuente-kernel
+          git clone --depth=1 -b RAGNARØK https://github.com/dav-quez/CyberInfintyKernel.git fuente-kernel
 
       - name: Instalar dependencias de Ubuntu
         run: |
           sudo apt-get update
           sudo apt-get install -y libarchive-tools ccache wget gcc-aarch64-linux-gnu
 
-      - name: Inyectar el Overclock de Vinix
+      - name: Inyectar u Optimizar Overclock
         run: |
           cd fuente-kernel
+          # Creamos la carpeta por si acaso e inyectamos los archivos modificados
+          mkdir -p drivers/cpufreq
           echo "Descargando e inyectando controladores ACME modificados..."
           wget -O drivers/cpufreq/exynos-acme.c https://raw.githubusercontent.com/dav-quez/CyberInfintyKernel/RAGNAR%C3%98K/drivers/cpufreq/exynos-acme.c
           wget -O drivers/cpufreq/exynos-acme.h https://raw.githubusercontent.com/dav-quez/CyberInfintyKernel/RAGNAR%C3%98K/drivers/cpufreq/exynos-acme.h

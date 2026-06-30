@@ -20,6 +20,8 @@ jobs:
       - name: Inyectar KernelSU-Next (¡Faltaba esto!)
         run: |
           cd fuente-kernel/drivers
+          echo "Borrando rastro previo de carpeta vacía..."
+          rm -rf kernelsu
           echo "Clonando fuentes de KernelSU-Next..."
           git clone https://github.com/rifsxd/KernelSU-Next.git kernelsu
 

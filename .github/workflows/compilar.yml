@@ -1,0 +1,37 @@
+name: Compilar Kernel Note 20 Ultra
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar solo el Kernel de Artisan
+        run: |
+          git clone --depth=1 -b sixteen https://github.com/dav-quez/ArtisanROM.git fuente-kernel
+
+      - name: Instalar dependencias de Ubuntu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools ccache wget gcc-aarch64-linux-gnu
+
+      - name: Inyectar el Overclock de Vinix
+        run: |
+          cd fuente-kernel
+          echo "Descargando e inyectando controladores ACME modificados..."
+          wget -O drivers/cpufreq/exynos-acme.c https://raw.githubusercontent.com/dav-quez/CyberInfintyKernel/RAGNAR%C3%98K/drivers/cpufreq/exynos-acme.c
+          wget -O drivers/cpufreq/exynos-acme.h https://raw.githubusercontent.com/dav-quez/CyberInfintyKernel/RAGNAR%C3%98K/drivers/cpufreq/exynos-acme.h
+
+      - name: Iniciar Compilación del Kernel
+        run: |
+          cd fuente-kernel
+          chmod +x ./build.sh
+          ./build.sh -m c1s -k y
+
+      - name: Subir Kernel Flasheable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-Overclock-C2S
+          path: fuente-kernel/*.zip

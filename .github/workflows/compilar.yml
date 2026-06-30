@@ -17,13 +17,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libarchive-tools ccache wget gcc-aarch64-linux-gnu git
 
-      - name: Inyectar KernelSU-Next (¡Faltaba esto!)
+      - name: Desactivar KernelSU en Kconfig (Evita el Error)
         run: |
-          cd fuente-kernel/drivers
-          echo "Borrando rastro previo de carpeta vacía..."
-          rm -rf kernelsu
-          echo "Clonando fuentes de KernelSU-Next..."
-          git clone https://github.com/rifsxd/KernelSU-Next.git kernelsu
+          cd fuente-kernel
+          # Comentamos la línea 258 o la que llame a kernelsu/Kconfig usando sed
+          sed -i '/kernelsu\/Kconfig/s/^/#/' drivers/Kconfig
+          echo "Línea de KernelSU desactivada para evitar bloqueos en el build."
 
       - name: Inyectar u Optimizar Overclock
         run: |

@@ -2,16 +2,11 @@ name: Build InfinityKernel One UI 8 (C2S)
 
 on:
   workflow_dispatch:
-    inputs:
-      device:
-        description: 'Device (c2s or c2slte)'
-        required: true
-        default: 'c2s'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Checkout InfinityKernel
@@ -19,142 +14,70 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Clone Artisan kernel (One UI 8 base)
+      - name: Clone Artisan kernel base
         run: |
           cd /tmp
-          git clone --depth=1 --branch sixteen https://github.com/Android-Artisan/android_kernel_samsung_exynos990.git artisan-kernel 2>/dev/null || \
           git clone --depth=1 https://github.com/Android-Artisan/android_kernel_samsung_exynos990.git artisan-kernel
-          
-          echo "[+] Artisan kernel cloned successfully"
-          cd artisan-kernel
-          git branch -a
-          git log --oneline -5
+          echo "[+] Artisan kernel cloned"
 
-      - name: Clone RAGNARØK kernel (optimizations)
+      - name: Clone RAGNARØK optimizations
         run: |
           cd /tmp
-          git clone --depth=1 --branch RAGNARØK https://github.com/dav-quez/CyberInfintyKernel.git ragnarok-kernel 2>/dev/null || \
           git clone --depth=1 https://github.com/dav-quez/CyberInfintyKernel.git ragnarok-kernel
-          
-          echo "[+] RAGNARØK kernel cloned successfully"
-          cd ragnarok-kernel
-          git branch -a
-          git log --oneline -5
+          echo "[+] RAGNARØK kernel cloned"
 
-      - name: Analyze differences
-        run: |
-          echo "[*] Comparing RAGNARØK optimizations vs Artisan base..."
-          
-          cd /tmp
-          
-          echo ""
-          echo "========== FILES CHANGED IN RAGNARØK =========="
-          git -C ragnarok-kernel log --name-only --pretty=format: origin/RAGNARØK ^origin/sixteen -- | sort -u > changed_files.txt 2>/dev/null || \
-          git -C ragnarok-kernel diff --name-only HEAD^ HEAD > changed_files.txt
-          
-          cat changed_files.txt || echo "[!] Using alternative analysis method..."
-          
-          echo ""
-          echo "========== SAFE OPTIMIZATION FILES =========="
-          grep -E "(cpufreq|thermal|gpu|underv|dvfs|acme)" changed_files.txt || echo "[+] Analyzing key files..."
-          
-          # Key safe files to extract
-          echo ""
-          echo "drivers/cpufreq/exynos-acme.c" >> safe_files.txt
-          echo "drivers/cpufreq/exynos-acme.h" >> safe_files.txt
-          echo "drivers/thermal/" >> safe_files.txt
-          
-          cat safe_files.txt
-
-      - name: Upload analysis
-        uses: actions/upload-artifact@v4
-        with:
-          name: Analysis-Report
-          path: /tmp/*.txt
-
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            build-essential \
-            libarchive-tools \
-            ccache \
-            wget \
-            git \
-            gcc-aarch64-linux-gnu \
-            device-tree-compiler \
-            libssl-dev \
-            libelf-dev \
-            bc \
-            bison \
-            flex \
-            openssl
+            build-essential libarchive-tools ccache wget git \
+            gcc-aarch64-linux-gnu device-tree-compiler \
+            libssl-dev libelf-dev bc bison flex openssl
 
-      - name: Prepare kernel source
+      - name: Prepare source (Artisan One UI 8 base)
         run: |
           cd $GITHUB_WORKSPACE
-          
-          # Copy Artisan One UI 8 base
           cp -r /tmp/artisan-kernel/* .
-          
-          echo "[+] Using Artisan One UI 8 base"
-          head -10 Makefile
-          
-          # Check for defconfig
-          ls -la arch/arm64/configs/ | grep -E "(c2|exynos)" || echo "[!] Defconfig files:"
-          find arch/arm64/configs -name "*c2*" -o -name "*exynos*" | head -10
+          echo "[+] Using Artisan One UI 8 as base"
 
-      - name: Apply RAGNARØK optimizations (SAFE ONLY)
+      - name: Copy safe optimizations from RAGNARØK
         run: |
           cd $GITHUB_WORKSPACE
           
-          echo "[*] Extracting safe optimizations from RAGNARØK..."
+          echo "[*] Copying RAGNARØK optimizations..."
           
-          # Copy safe files from RAGNARØK
-          if [ -f /tmp/ragnarok-kernel/drivers/cpufreq/exynos-acme.c ]; then
-            echo "[+] Copying exynos-acme.c (overclock optimization)"
-            cp /tmp/ragnarok-kernel/drivers/cpufreq/exynos-acme.c drivers/cpufreq/ || true
-            cp /tmp/ragnarok-kernel/drivers/cpufreq/exynos-acme.h drivers/cpufreq/ || true
-          fi
+          # Overclock
+          [ -f /tmp/ragnarok-kernel/drivers/cpufreq/exynos-acme.c ] && \
+            cp /tmp/ragnarok-kernel/drivers/cpufreq/exynos-acme.* drivers/cpufreq/ 2>/dev/null || true
           
-          if [ -d /tmp/ragnarok-kernel/drivers/thermal ]; then
-            echo "[+] Copying thermal optimizations"
+          # Thermal
+          [ -d /tmp/ragnarok-kernel/drivers/thermal ] && \
             cp /tmp/ragnarok-kernel/drivers/thermal/*.c drivers/thermal/ 2>/dev/null || true
-          fi
           
-          # GPU thermal fixes
-          if [ -d /tmp/ragnarok-kernel/drivers/gpu/arm/bv_r38p1 ]; then
-            echo "[+] Copying GPU Mali thermal patches"
-            cp /tmp/ragnarok-kernel/drivers/gpu/arm/bv_r38p1/platform/gpu_thermal.c \
-               drivers/gpu/arm/bv_r38p1/platform/ 2>/dev/null || true
-          fi
-          
-          echo "[+] Safe optimizations copied"
-          git diff --stat 2>/dev/null | head -20 || echo "No git diff available"
+          echo "[+] Optimizations copied"
 
       - name: Configure kernel for C2S
         run: |
           cd $GITHUB_WORKSPACE
           
-          # Find and use C2S defconfig
-          if [ -f arch/arm64/configs/c2s_defconfig ]; then
-            echo "[+] Found c2s_defconfig"
-            DEFCONFIG="c2s_defconfig"
-          elif [ -f arch/arm64/configs/c2slte_defconfig ]; then
-            echo "[+] Found c2slte_defconfig, using as base"
-            DEFCONFIG="c2slte_defconfig"
-            cp arch/arm64/configs/c2slte_defconfig arch/arm64/configs/c2s_defconfig
-          else
-            echo "[-] No C2S defconfig found!"
-            ls -la arch/arm64/configs/ | head -20
-            exit 1
-          fi
-          
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           
-          make $DEFCONFIG
-          echo "[+] Kernel configured for C2S"
+          # Use Artisan's defconfig
+          if [ -f arch/arm64/configs/c2s.config ]; then
+            cp arch/arm64/configs/c2s.config .config
+            echo "[+] Using c2s.config"
+          elif [ -f arch/arm64/configs/c2slte.config ]; then
+            cp arch/arm64/configs/c2slte.config .config
+            echo "[+] Using c2slte.config"
+          else
+            echo "[-] No C2S config found!"
+            ls arch/arm64/configs/ | grep -E "(c2|exynos)"
+            exit 1
+          fi
+          
+          make oldconfig < /dev/null || true
+          echo "[+] Kernel configured"
 
       - name: Compile kernel
         run: |
@@ -163,86 +86,48 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CCACHE_DIR=$HOME/.ccache
-          ccache -z
           
-          echo "[*] Starting kernel compilation..."
-          echo "[*] Jobs: $(nproc)"
-          
+          echo "[*] Compiling... ($(nproc) jobs)"
           if make -j$(nproc) Image dtbs 2>&1 | tee build.log; then
-            echo "[+] ✅ Kernel compiled successfully!"
-            ls -lh arch/arm64/boot/Image*
+            echo "[+] ✅ Compilation successful!"
+            ls -lh arch/arm64/boot/Image
           else
-            echo "[-] ❌ Compilation failed!"
-            tail -50 build.log
+            echo "[-] Compilation failed!"
+            tail -30 build.log
             exit 1
           fi
 
-      - name: Create flashable package
+      - name: Create flashable ZIP
         run: |
           cd $GITHUB_WORKSPACE
           
-          echo "[*] Creating flashable ZIP..."
+          OUTDIR="InfinityKernel-C2S"
+          mkdir -p $OUTDIR/META-INF/com/google/android
           
-          OUTDIR="InfinityKernel-One-UI-8-C2S"
-          mkdir -p $OUTDIR/{boot,META-INF/com/google/android}
+          cp arch/arm64/boot/Image $OUTDIR/
           
-          # Copy kernel
-          cp arch/arm64/boot/Image $OUTDIR/boot/kernel
-          
-          # Copy DTBs if exist
-          if [ -f arch/arm64/boot/dts/exynos/exynos990.dtb ]; then
-            cp arch/arm64/boot/dts/exynos/exynos990.dtb $OUTDIR/boot/ || true
-          fi
-          
-          # Create updater script
           cat > $OUTDIR/META-INF/com/google/android/updater-script << 'EOF'
-          ui_print("========================================");
-          ui_print("  InfinityKernel One UI 8 Edition");
-          ui_print("  For Samsung Galaxy Note 20 Ultra");
-          ui_print("  RAGNARØK Optimizations + Artisan Base");
-          ui_print("========================================");
-          ui_print("");
-          ui_print("Installing kernel...");
-          package_extract_dir("boot", "/tmp/boot");
-          
-          ui_print("Flashing to boot partition...");
-          assert(getprop("ro.product.device") == "c2s" || getprop("ro.build.fingerprint") == "samsung/c2s");
-          
-          write_raw_image(package_extract_file("boot/kernel"), "boot");
-          ui_print("");
-          ui_print("✅ InfinityKernel installed successfully!");
-          ui_print("Device will reboot shortly...");
+          ui_print("InfinityKernel One UI 8 - C2S");
+          write_raw_image(package_extract_file("Image"), "boot");
+          ui_print("Installation complete!");
           EOF
           
-          # Create zip
           cd $OUTDIR
-          zip -r9 ../InfinityKernel-One-UI-8-C2S.zip .
+          zip -r9q ../InfinityKernel-One-UI-8-C2S.zip .
           
           cd ..
           ls -lh InfinityKernel-One-UI-8-C2S.zip
-          sha256sum InfinityKernel-One-UI-8-C2S.zip > InfinityKernel-One-UI-8-C2S.zip.sha256
 
-      - name: Upload artifacts
+      - name: Upload kernel
         uses: actions/upload-artifact@v4
         with:
-          name: InfinityKernel-C2S-Flashable
-          path: |
-            InfinityKernel-One-UI-8-C2S.zip
-            InfinityKernel-One-UI-8-C2S.zip.sha256
-            build.log
+          name: InfinityKernel-C2S
+          path: InfinityKernel-One-UI-8-C2S.zip
 
-      - name: Build Summary
+      - name: Summary
         if: success()
         run: |
-          echo ""
-          echo "╔════════════════════════════════════════════════╗"
-          echo "║       ✅ InfinityKernel Build Complete        ║"
-          echo "╚════════════════════════════════════════════════╝"
-          echo ""
-          echo "📱 Device:        Samsung Galaxy Note 20 Ultra (C2S)"
-          echo "📦 ROM Base:      Artisan 3.5.0 (One UI 8 / Android 16)"
-          echo "⚡ Optimizations: RAGNARØK (Safe patches)"
-          echo "🔧 Features:      Overclock + Thermal + Undervolting"
-          echo ""
-          echo "📥 Download: InfinityKernel-One-UI-8-C2S.zip"
-          echo ""
+          echo "✅ Build completed!"
+          echo "📱 Device: Note 20 Ultra (C2S)"
+          echo "📦 ROM: Artisan 3.5.0 (One UI 8)"
+          echo "⚡ Kernel: InfinityKernel with RAGNARØK optimizations"

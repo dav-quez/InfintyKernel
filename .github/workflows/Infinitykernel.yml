@@ -64,7 +64,7 @@ ENDHEADER
           export CROSS_COMPILE=aarch64-linux-gnu-
           if make -j$(nproc) Image dtbs > /dev/null 2>&1; then
             if [ -f arch/arm64/boot/Image ]; then
-              echo "[+] ✅ Kernel compiled!"
+              echo "[+] Kernel compiled!"
               ls -lh arch/arm64/boot/Image
             else
               exit 1
@@ -82,7 +82,7 @@ ENDHEADER
           cat > $OUTDIR/META-INF/com/google/android/updater-script << 'EOF'
           ui_print("InfinityKernel One UI 8 - C2S");
           write_raw_image(package_extract_file("Image"), "boot");
-          ui_print("✅ Done!");
+          ui_print("Done!");
           EOF
           cd $OUTDIR && zip -r9q ../InfinityKernel-One-UI-8-C2S.zip . && cd ..
 

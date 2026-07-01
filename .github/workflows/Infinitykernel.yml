@@ -10,6 +10,16 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu libssl-dev libelf-dev bc bison flex
       - run: cp -r /tmp/kernel/* $GITHUB_WORKSPACE/
       - run: cd $GITHUB_WORKSPACE && sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig 2>/dev/null || true
+      - run: |
+          cat > $GITHUB_WORKSPACE/include/linux/debug-snapshot.h << 'ENDFILE'
+          #ifndef __DEBUG_SNAPSHOT_H
+          #define __DEBUG_SNAPSHOT_H
+          #define dbg_snapshot_spinlock(x) do {} while (0)
+          #define dbg_snapshot_irqs_disabled(x) do {} while (0)
+          #define dbg_snapshot_get_hardlockup() (0)
+          #define dbg_snapshot_irq(x, y, z) do {} while (0)
+          #endif
+          ENDFILE
       - run: cd $GITHUB_WORKSPACE && export ARCH=arm64 && export CROSS_COMPILE=aarch64-linux-gnu- && cp arch/arm64/configs/c2s.config .config && sed -i '/CONFIG_DEBUG_SNAPSHOT/d' .config && echo "# CONFIG_DEBUG_SNAPSHOT is not set" >> .config && make olddefconfig && make -j4 Image dtbs
       - run: cd $GITHUB_WORKSPACE && mkdir -p out && cp arch/arm64/boot/Image out/ && cd out && zip -r9 ../InfinityKernel-C2S.zip . && cd ..
       - uses: actions/upload-artifact@v4

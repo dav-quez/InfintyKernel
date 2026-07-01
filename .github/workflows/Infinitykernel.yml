@@ -70,7 +70,6 @@ jobs:
             echo "=== Compile attempt $i/$MAX_TRIES ==="
             echo "=============================="
             
-            # Aumentamos el registro de salida a 100 líneas para no perder los errores del linker
             make -j$(nproc) Image dtbs 2>&1 | tee build.log | tail -n 100
 
             if [ -f arch/arm64/boot/Image ]; then
@@ -93,36 +92,33 @@ jobs:
             # ---------------------------------------------------------
             # CIRUGÍA DINÁMICA: Buscar código infractor y forzar recompilación
             # ---------------------------------------------------------
+            SURGERY_DONE=0
             for sym in $NEW_SYMS; do
-              # Si ya tratamos este símbolo, lo saltamos
-              if echo "$EXISTING" | grep -q "^$sym$"; then continue; fi
-              
               echo "[*] Cacería de archivos fuente para el símbolo: $sym"
-              # Busca todos los .c en los drivers que contengan el símbolo fallido
               AFFECTED_FILES=$(find drivers arch kernel include -type f -name "*.c" 2>/dev/null | xargs -r grep -l "$sym" 2>/dev/null || true)
               
               for f in $AFFECTED_FILES; do
-                # Inyectar el include si no lo tiene
                 if ! grep -q "linux/debug-snapshot.h" "$f"; then
                   echo "[+] Inyectando cabecera en: $f"
                   sed -i '1i #include <linux/debug-snapshot.h>' "$f"
                 fi
                 
-                # Borrar el archivo .o para obligar a Make a recompilar este archivo específico
                 O_FILE="${f%.c}.o"
                 if [ -f "$O_FILE" ]; then
                   echo "[+] Borrando $O_FILE para forzar la recompilación..."
                   rm -f "$O_FILE"
+                  SURGERY_DONE=1
                 fi
               done
             done
             # ---------------------------------------------------------
 
             ALL_SYMS=$(printf "%s\n%s\n" "$EXISTING" "$NEW_SYMS" | sort -u | sed '/^$/d')
-
             CURRENT_COUNT=$(echo "$ALL_SYMS" | wc -l)
-            if [ "$CURRENT_COUNT" -eq "$PREV_COUNT" ]; then
-              echo "[-] No progress made (same symbols repeating), stopping."
+
+            # Ahora verificamos si se agregaron símbolos nuevos O si se borró algún archivo .o
+            if [ "$CURRENT_COUNT" -eq "$PREV_COUNT" ] && [ "$SURGERY_DONE" -eq 0 ]; then
+              echo "[-] No progress made (same symbols repeating and no files patched), stopping."
               echo "=== Last 150 lines of build.log ==="
               tail -150 build.log
               exit 1

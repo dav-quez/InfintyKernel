@@ -41,7 +41,7 @@ jobs:
           echo "# CONFIG_EXYNOS_SNAPSHOT is not set" >> .config
           make olddefconfig > /dev/null 2>&1 || true
 
-          # Reset debug-snapshot.h to a clean minimal stub before self-healing loop
+          # Reset debug-snapshot.h to a clean minimal stub
           cat > include/linux/debug-snapshot.h << 'ENDFILE'
           #ifndef __DEBUG_SNAPSHOT_H
           #define __DEBUG_SNAPSHOT_H
@@ -54,13 +54,15 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          MAX_TRIES=12
+          MAX_TRIES=15
           PREV_COUNT=0
 
           for i in $(seq 1 $MAX_TRIES); do
             echo "=============================="
             echo "=== Compile attempt $i/$MAX_TRIES ==="
             echo "=============================="
+            
+            # Compilamos capturando el log
             make -j$(nproc) Image dtbs 2>&1 | tee build.log | tail -n 40
 
             if [ -f arch/arm64/boot/Image ]; then
@@ -68,9 +70,9 @@ jobs:
               break
             fi
 
-            # Extract any undeclared/implicit debug-snapshot related symbols
+            # Corregido: Ahora detecta tanto minúsculas como MAYÚSCULAS (ej. DSS_FLAG_IN)
             NEW_SYMS=$(grep -E "undeclared|implicit declaration|takes just" build.log \
-              | grep -oE "(dbg_snapshot_[a-zA-Z0-9_]+|exynos_ss_[a-zA-Z0-9_]+|dss_[a-zA-Z0-9_]+)" \
+              | grep -oE "([dD][bB][gG]_snapshot_[a-zA-Z0-9_]+|[eE][xX][yY][nN][oO][sS]_ss_[a-zA-Z0-9_]+|[dD][sS][sS]_[a-zA-Z0-9_]+)" \
               | sort -u)
 
             if [ -z "$NEW_SYMS" ]; then
@@ -80,7 +82,7 @@ jobs:
               exit 1
             fi
 
-            # Merge with existing stub defines
+            # Combinar con los existentes extraídos limpiamente
             EXISTING=$(grep '^#define' include/linux/debug-snapshot.h 2>/dev/null | sed 's/#define //;s/(.*//' | sort -u)
             ALL_SYMS=$(printf "%s\n%s\n" "$EXISTING" "$NEW_SYMS" | sort -u | sed '/^$/d')
 
@@ -93,11 +95,17 @@ jobs:
             fi
             PREV_COUNT=$CURRENT_COUNT
 
+            # Reconstruir la cabecera debug-snapshot.h inteligentemente
             {
               echo "#ifndef __DEBUG_SNAPSHOT_H"
               echo "#define __DEBUG_SNAPSHOT_H"
               for sym in $ALL_SYMS; do
-                echo "#define $sym(...) (0)"
+                # Si el símbolo está completamente en MAYÚSCULAS, asumimos que es una constante/flag, no una función
+                if [[ "$sym" =~ ^[A-Z0-9_]+$ ]]; then
+                  echo "#define $sym 0"
+                else
+                  echo "#define $sym(...) (0)"
+                fi
               done
               echo "#endif"
             } > include/linux/debug-snapshot.h

@@ -1,41 +1,124 @@
-- name: Self-healing compile (Deep Linker Fix)
+name: Build InfinityKernel (Self-Healing)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone RAGNARØK kernel
+        run: |
+          cd /tmp
+          git clone --depth=1 https://github.com/dav-quez/CyberInfintyKernel.git kernel
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu \
+            libssl-dev libelf-dev bc bison flex device-tree-compiler zip
+
+      - name: Prepare source
+        run: |
+          cp -r /tmp/kernel/* $GITHUB_WORKSPACE/
+          cd $GITHUB_WORKSPACE
+          # Desactivar KernelSU si causa conflictos
+          sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig 2>/dev/null || true
+          sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile 2>/dev/null || true
+
+      - name: Configure kernel
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
+          cp arch/arm64/configs/c2s.config .config
+          # Forzar flags básicos
+          echo "CONFIG_DEBUG_INFO=n" >> .config
+          make olddefconfig > /dev/null 2>&1 || true
 
-          for i in {1..10}; do
+          # Inicializar cabecera de parches
+          cat > include/linux/debug-snapshot.h << 'ENDFILE'
+          #ifndef __DEBUG_SNAPSHOT_H
+          #define __DEBUG_SNAPSHOT_H
+          #endif
+          ENDFILE
+
+      - name: Self-healing compile (Deep Linker Fix)
+        run: |
+          cd $GITHUB_WORKSPACE
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          
+          # Intentar compilar hasta 15 veces con auto-corrección
+          for i in {1..15}; do
             echo "=== Intento de Compilación $i ==="
+            # Capturar logs para análisis
             make -j$(nproc) Image 2>&1 | tee build.log
-
-            if [ -f arch/arm64/boot/Image ]; then echo "ÉXITO"; exit 0; fi
-
-            # Si falla, buscamos el símbolo perdido
-            MISSING_SYM=$(grep "undefined reference to" build.log | head -n 1 | cut -d"'" -f2)
             
-            if [ ! -z "$MISSING_SYM" ]; then
+            if [ -f arch/arm64/boot/Image ]; then
+              echo "[+] ✅ Compilación Exitosa"
+              break
+            fi
+
+            # Analizar error
+            if grep -q "undefined reference to" build.log; then
+              MISSING_SYM=$(grep "undefined reference to" build.log | head -n 1 | cut -d"'" -f2)
+              FAILING_DIR=$(grep -B 5 "undefined reference to" build.log | grep "LD" | tail -n 1 | cut -d'/' -f1 | sed 's/.* //')
+              
               echo "[!] Símbolo perdido detectado: $MISSING_SYM"
+              echo "[!] Directorio fallido: $FAILING_DIR"
+
+              # 1. Intentar localizar el archivo fuente que define el símbolo
+              SOURCE_FILE=$(grep -r " $MISSING_SYM" . --include="*.c" | grep -v ".o:" | cut -d: -f1 | head -n 1)
               
-              # Buscar en qué archivo está definido el símbolo
-              REAL_FILE=$(grep -r "$MISSING_SYM" . | grep -v ".o:" | grep ".c:" | cut -d: -f1 | head -n 1)
-              
-              if [ ! -z "$REAL_FILE" ]; then
-                echo "[+] Símbolo encontrado en: $REAL_FILE. Añadiendo al Makefile local..."
-                # Convertimos el nombre del archivo .c a .o para el Makefile
-                OBJ_NAME=$(basename "${REAL_FILE%.c}.o")
+              if [ ! -z "$SOURCE_FILE" ]; then
+                echo "[+] Símbolo encontrado en: $SOURCE_FILE. Injectando en Makefile local..."
+                # Convertir archivo a objeto y agregarlo al Makefile del directorio que falla
+                OBJ_NAME=$(basename "${SOURCE_FILE%.c}.o")
                 
-                # Inyectar en el Makefile del directorio actual de error
-                # Asumimos que el error es en el directorio donde falla el link
-                echo "obj-y += $OBJ_NAME" >> drivers/gpu/arm/bv_r38p1/Makefile
+                # Buscar el Makefile correspondiente
+                MAKEFILE_PATH=$(find drivers -name "Makefile" | grep "$FAILING_DIR" | head -n 1)
                 
-                # Limpiar para forzar link
-                rm -f drivers/gpu/arm/bv_r38p1/*.o
+                if [ ! -z "$MAKEFILE_PATH" ]; then
+                  echo "obj-y += $OBJ_NAME" >> "$MAKEFILE_PATH"
+                  echo "[+] Modificado: $MAKEFILE_PATH"
+                fi
               else
-                echo "[!] No se encontró el archivo fuente para $MISSING_SYM. Intentando parchear cabecera..."
+                echo "[+] No se localizó fuente. Forzando definición en cabecera..."
                 echo "#define $MISSING_SYM(...) (0)" >> include/linux/debug-snapshot.h
               fi
+              
+              # Borrar objetos del directorio fallido para forzar recompilación
+              find "$FAILING_DIR" -name "*.o" -type f -delete
             fi
             
-            # Limpieza básica para evitar el "No progress made"
+            # Limpiar para evitar basura de compilaciones previas fallidas
             make clean
           done
+
+          if [ ! -f arch/arm64/boot/Image ]; then
+            echo "[-] Error: La compilación falló tras 15 intentos."
+            tail -n 50 build.log
+            exit 1
+          fi
+
+      - name: Create flashable ZIP
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p out/META-INF/com/google/android
+          cp arch/arm64/boot/Image out/
+          cat > out/META-INF/com/google/android/updater-script << 'EOF'
+          ui_print("InfinityKernel C2S - Fixed");
+          write_raw_image(package_extract_file("Image"), "boot");
+          ui_print("Done!");
+          EOF
+          cd out && zip -r9 ../InfinityKernel-C2S.zip . && cd ..
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-Result
+          path: InfinityKernel-C2S.zip

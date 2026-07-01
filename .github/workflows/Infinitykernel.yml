@@ -1,94 +1,18 @@
-name: Build InfinityKernel One UI 8 (C2S)
-
+name: Build
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-
     steps:
-      - name: Checkout InfinityKernel
-        uses: actions/checkout@v4
-
-      - name: Clone RAGNARØK kernel
-        run: |
-          cd /tmp
-          git clone --depth=1 https://github.com/dav-quez/CyberInfintyKernel.git ragnarok-kernel
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential libarchive-tools ccache wget git gcc-aarch64-linux-gnu device-tree-compiler libssl-dev libelf-dev bc bison flex openssl
-
-      - name: Prepare source
-        run: |
-          cd $GITHUB_WORKSPACE
-          cp -r /tmp/ragnarok-kernel/* .
-
-      - name: Fix kernel
-        run: |
-          cd $GITHUB_WORKSPACE
-          [ -f drivers/Kconfig ] && sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig
-          [ -f drivers/Makefile ] && sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile
-          
-          if [ -f include/linux/debug-snapshot.h ]; then
-            cat > include/linux/debug-snapshot.h << 'ENDHEADER'
-          #ifndef __DEBUG_SNAPSHOT_H
-          #define __DEBUG_SNAPSHOT_H
-          
-          static inline int dbg_snapshot_get_hardlockup(void) { return 0; }
-          
-          #endif
-          ENDHEADER
-          fi
-
-      - name: Configure kernel
-        run: |
-          cd $GITHUB_WORKSPACE
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          cp arch/arm64/configs/c2s.config .config
-          sed -i '/CONFIG_DEBUG_SNAPSHOT/d' .config
-          echo "# CONFIG_DEBUG_SNAPSHOT is not set" >> .config
-          make olddefconfig > /dev/null 2>&1 || true
-
-      - name: Compile kernel
-        run: |
-          cd $GITHUB_WORKSPACE
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          echo "[*] Compiling..."
-          make -j$(nproc) Image dtbs 2>&1 | tee compile.log
-          
-          if [ -f arch/arm64/boot/Image ]; then
-            echo "[+] ✅ Kernel compiled!"
-            ls -lh arch/arm64/boot/Image
-          else
-            echo "[-] Compilation failed"
-            echo ""
-            echo "=== Last 30 lines of log ==="
-            tail -30 compile.log
-            exit 1
-          fi
-
-      - name: Create flashable ZIP
-        run: |
-          cd $GITHUB_WORKSPACE
-          OUTDIR="InfinityKernel-C2S"
-          mkdir -p $OUTDIR/META-INF/com/google/android
-          cp arch/arm64/boot/Image $OUTDIR/
-          cat > $OUTDIR/META-INF/com/google/android/updater-script << 'EOF'
-          ui_print("InfinityKernel One UI 8 - C2S");
-          write_raw_image(package_extract_file("Image"), "boot");
-          ui_print("✅ Done!");
-          EOF
-          cd $OUTDIR && zip -r9q ../InfinityKernel-One-UI-8-C2S.zip . && cd ..
-          ls -lh InfinityKernel-One-UI-8-C2S.zip
-
-      - name: Upload kernel
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
+      - run: cd /tmp && git clone --depth=1 https://github.com/dav-quez/CyberInfintyKernel.git kernel
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu libssl-dev libelf-dev bc bison flex
+      - run: cp -r /tmp/kernel/* $GITHUB_WORKSPACE/
+      - run: cd $GITHUB_WORKSPACE && sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig 2>/dev/null || true
+      - run: cd $GITHUB_WORKSPACE && export ARCH=arm64 && export CROSS_COMPILE=aarch64-linux-gnu- && cp arch/arm64/configs/c2s.config .config && sed -i '/CONFIG_DEBUG_SNAPSHOT/d' .config && echo "# CONFIG_DEBUG_SNAPSHOT is not set" >> .config && make olddefconfig && make -j4 Image dtbs
+      - run: cd $GITHUB_WORKSPACE && mkdir -p out && cp arch/arm64/boot/Image out/ && cd out && zip -r9 ../InfinityKernel-C2S.zip . && cd ..
+      - uses: actions/upload-artifact@v4
         with:
-          name: InfinityKernel-C2S
-          path: InfinityKernel-One-UI-8-C2S.zip
+          name: Kernel
+          path: InfinityKernel-C2S.zip

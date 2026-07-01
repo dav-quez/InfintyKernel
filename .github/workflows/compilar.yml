@@ -8,9 +8,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Clonar base de CyberInfintyKernel (Clon Completo)
+      - name: Clonar base de CyberInfintyKernel
         run: |
-          # Quitamos el depth=1 para heredar todos los enlaces y archivos de la GPU
           git clone -b RAGNARØK https://github.com/dav-quez/CyberInfintyKernel.git fuente-kernel
 
       - name: Instalar dependencias de Ubuntu
@@ -23,6 +22,16 @@ jobs:
           cd fuente-kernel
           sed -i '/kernelsu\/Kconfig/s/^/#/' drivers/Kconfig
           echo "Línea de KernelSU desactivada para evitar bloqueos en el build."
+
+      - name: Corregir Ruta Térmica de la GPU (Fix gpex_thermal)
+        run: |
+          cd fuente-kernel
+          echo "Creando parches de rutas para el compilador..."
+          # Forzamos la creación de la ruta que el Makefile de la GPU espera encontrar
+          mkdir -p drivers/gpu/arm/exynos/frontend
+          cp drivers/gpu/arm/exynos/frontend/gpex_thermal.c drivers/gpu/arm/bv_r38p1/gpex_thermal.c 2>/dev/null || true
+          # Enlazamos de forma absoluta para blindar el sub-make
+          ln -s /home/runner/work/InfintyKernel/InfintyKernel/fuente-kernel/drivers/gpu/arm/exynos /home/runner/work/InfintyKernel/InfintyKernel/fuente-kernel/drivers/gpu/arm/exynos
 
       - name: Inyectar u Optimizar Overclock
         run: |

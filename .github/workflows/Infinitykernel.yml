@@ -33,7 +33,6 @@ jobs:
           [ -f drivers/Kconfig ] && sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig
           [ -f drivers/Makefile ] && sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile
           
-          # Remove debug-snapshot completely to avoid conflicts
           if [ -f include/linux/debug-snapshot.h ]; then
             cat > include/linux/debug-snapshot.h << 'ENDHEADER'
           #ifndef __DEBUG_SNAPSHOT_H
@@ -60,12 +59,19 @@ jobs:
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          make -j$(nproc) Image dtbs > /dev/null 2>&1
-          if [ ! -f arch/arm64/boot/Image ]; then
-            echo "Compilation failed"
+          echo "[*] Compiling..."
+          make -j$(nproc) Image dtbs 2>&1 | tee compile.log
+          
+          if [ -f arch/arm64/boot/Image ]; then
+            echo "[+] ✅ Kernel compiled!"
+            ls -lh arch/arm64/boot/Image
+          else
+            echo "[-] Compilation failed"
+            echo ""
+            echo "=== Last 30 lines of log ==="
+            tail -30 compile.log
             exit 1
           fi
-          ls -lh arch/arm64/boot/Image
 
       - name: Create flashable ZIP
         run: |

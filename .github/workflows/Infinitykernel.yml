@@ -1,29 +1,137 @@
-name: Build
+name: Build InfinityKernel (Self-Healing)
+
 on:
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
+
     steps:
       - uses: actions/checkout@v4
-      - run: cd /tmp && git clone --depth=1 https://github.com/dav-quez/CyberInfintyKernel.git kernel
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu libssl-dev libelf-dev bc bison flex
-      - run: cp -r /tmp/kernel/* $GITHUB_WORKSPACE/
-      - run: cd $GITHUB_WORKSPACE && sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig 2>/dev/null || true
-      - run: |
-          cat > $GITHUB_WORKSPACE/include/linux/debug-snapshot.h << 'ENDFILE'
+
+      - name: Clone RAGNARØK kernel
+        run: |
+          cd /tmp
+          git clone --depth=1 https://github.com/dav-quez/CyberInfintyKernel.git kernel
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu \
+            libssl-dev libelf-dev bc bison flex device-tree-compiler
+
+      - name: Prepare source
+        run: |
+          cp -r /tmp/kernel/* $GITHUB_WORKSPACE/
+          cd $GITHUB_WORKSPACE
+          sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig 2>/dev/null || true
+          sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile 2>/dev/null || true
+
+      - name: Configure kernel
+        run: |
+          cd $GITHUB_WORKSPACE
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          cp arch/arm64/configs/c2s.config .config
+          sed -i '/CONFIG_DEBUG_SNAPSHOT/d' .config
+          sed -i '/CONFIG_EXYNOS_SNAPSHOT/d' .config
+          echo "# CONFIG_DEBUG_SNAPSHOT is not set" >> .config
+          echo "# CONFIG_EXYNOS_SNAPSHOT is not set" >> .config
+          make olddefconfig > /dev/null 2>&1 || true
+
+          # Reset debug-snapshot.h to a clean minimal stub before self-healing loop
+          cat > include/linux/debug-snapshot.h << 'ENDFILE'
           #ifndef __DEBUG_SNAPSHOT_H
           #define __DEBUG_SNAPSHOT_H
-          #define dbg_snapshot_spinlock(...) do {} while (0)
-          #define dbg_snapshot_irqs_disabled(...) do {} while (0)
-          #define dbg_snapshot_get_hardlockup() (0)
-          #define dbg_snapshot_irq(...) do {} while (0)
-          #define dbg_snapshot_reg(...) do {} while (0)
-          #define dbg_snapshot_irqs(...) do {} while (0)
           #endif
           ENDFILE
-      - run: cd $GITHUB_WORKSPACE && export ARCH=arm64 && export CROSS_COMPILE=aarch64-linux-gnu- && cp arch/arm64/configs/c2s.config .config && sed -i '/CONFIG_DEBUG_SNAPSHOT/d' .config && echo "# CONFIG_DEBUG_SNAPSHOT is not set" >> .config && make olddefconfig && make -j4 Image dtbs
-      - run: cd $GITHUB_WORKSPACE && mkdir -p out && cp arch/arm64/boot/Image out/ && cd out && zip -r9 ../InfinityKernel-C2S.zip . && cd ..
+
+      - name: Self-healing compile (auto-patches missing debug-snapshot symbols)
+        run: |
+          cd $GITHUB_WORKSPACE
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+
+          MAX_TRIES=12
+          PREV_COUNT=0
+
+          for i in $(seq 1 $MAX_TRIES); do
+            echo "=============================="
+            echo "=== Compile attempt $i/$MAX_TRIES ==="
+            echo "=============================="
+            make -j$(nproc) Image dtbs 2>&1 | tee build.log | tail -n 40
+
+            if [ -f arch/arm64/boot/Image ]; then
+              echo "[+] ✅ Build succeeded on attempt $i"
+              break
+            fi
+
+            # Extract any undeclared/implicit debug-snapshot related symbols
+            NEW_SYMS=$(grep -E "undeclared|implicit declaration|takes just" build.log \
+              | grep -oE "(dbg_snapshot_[a-zA-Z0-9_]+|exynos_ss_[a-zA-Z0-9_]+|dss_[a-zA-Z0-9_]+)" \
+              | sort -u)
+
+            if [ -z "$NEW_SYMS" ]; then
+              echo "[-] Build failed but no more debug-snapshot symbols found."
+              echo "=== Last 80 lines of build.log ==="
+              tail -80 build.log
+              exit 1
+            fi
+
+            # Merge with existing stub defines
+            EXISTING=$(grep '^#define' include/linux/debug-snapshot.h 2>/dev/null | sed 's/#define //;s/(.*//' | sort -u)
+            ALL_SYMS=$(printf "%s\n%s\n" "$EXISTING" "$NEW_SYMS" | sort -u | sed '/^$/d')
+
+            CURRENT_COUNT=$(echo "$ALL_SYMS" | wc -l)
+            if [ "$CURRENT_COUNT" -eq "$PREV_COUNT" ]; then
+              echo "[-] No progress made (same symbols repeating), stopping."
+              echo "=== Last 80 lines of build.log ==="
+              tail -80 build.log
+              exit 1
+            fi
+            PREV_COUNT=$CURRENT_COUNT
+
+            {
+              echo "#ifndef __DEBUG_SNAPSHOT_H"
+              echo "#define __DEBUG_SNAPSHOT_H"
+              for sym in $ALL_SYMS; do
+                echo "#define $sym(...) (0)"
+              done
+              echo "#endif"
+            } > include/linux/debug-snapshot.h
+
+            echo "[*] Patched symbols so far:"
+            echo "$ALL_SYMS"
+          done
+
+          if [ ! -f arch/arm64/boot/Image ]; then
+            echo "[-] Failed after $MAX_TRIES attempts"
+            exit 1
+          fi
+
+          ls -lh arch/arm64/boot/Image
+
+      - name: Create flashable ZIP
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p out/META-INF/com/google/android
+          cp arch/arm64/boot/Image out/
+          cat > out/META-INF/com/google/android/updater-script << 'EOF'
+          ui_print("InfinityKernel One UI 8 - C2S");
+          write_raw_image(package_extract_file("Image"), "boot");
+          ui_print("Done!");
+          EOF
+          cd out && zip -r9 ../InfinityKernel-C2S.zip . && cd ..
+          ls -lh InfinityKernel-C2S.zip
+
+      - name: Upload debug-snapshot header (for reference)
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-snapshot-header
+          path: include/linux/debug-snapshot.h
+
       - uses: actions/upload-artifact@v4
         with:
           name: Kernel

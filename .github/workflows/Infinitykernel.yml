@@ -35,13 +35,16 @@ jobs:
           
           if [ -f include/linux/debug-snapshot.h ]; then
             cat > include/linux/debug-snapshot.h << 'ENDHEADER'
-          #ifndef __DEBUG_SNAPSHOT_H
-          #define __DEBUG_SNAPSHOT_H
-          
-          static inline int dbg_snapshot_get_hardlockup(void) { return 0; }
-          
-          #endif
-          ENDHEADER
+#ifndef __DEBUG_SNAPSHOT_H
+#define __DEBUG_SNAPSHOT_H
+
+static inline void dbg_snapshot_spinlock(unsigned int val) {}
+static inline void dbg_snapshot_irqs_disabled(unsigned int val) {}
+static inline int dbg_snapshot_get_hardlockup(void) { return 0; }
+static inline void dbg_snapshot_irq(unsigned int val, void *fn, unsigned int irq) {}
+
+#endif
+ENDHEADER
           fi
 
       - name: Configure kernel
@@ -59,17 +62,14 @@ jobs:
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          echo "[*] Compiling..."
-          make -j$(nproc) Image dtbs 2>&1 | tee compile.log
-          
-          if [ -f arch/arm64/boot/Image ]; then
-            echo "[+] ✅ Kernel compiled!"
-            ls -lh arch/arm64/boot/Image
+          if make -j$(nproc) Image dtbs > /dev/null 2>&1; then
+            if [ -f arch/arm64/boot/Image ]; then
+              echo "[+] ✅ Kernel compiled!"
+              ls -lh arch/arm64/boot/Image
+            else
+              exit 1
+            fi
           else
-            echo "[-] Compilation failed"
-            echo ""
-            echo "=== Last 30 lines of log ==="
-            tail -30 compile.log
             exit 1
           fi
 
@@ -85,7 +85,6 @@ jobs:
           ui_print("✅ Done!");
           EOF
           cd $OUTDIR && zip -r9q ../InfinityKernel-One-UI-8-C2S.zip . && cd ..
-          ls -lh InfinityKernel-One-UI-8-C2S.zip
 
       - name: Upload kernel
         uses: actions/upload-artifact@v4

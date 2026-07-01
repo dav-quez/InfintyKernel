@@ -8,9 +8,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Clonar base de CyberInfintyKernel
+      - name: Clonar base de CyberInfintyKernel (Clon Completo)
         run: |
-          git clone --depth=1 -b RAGNARØK https://github.com/dav-quez/CyberInfintyKernel.git fuente-kernel
+          # Quitamos el depth=1 para heredar todos los enlaces y archivos de la GPU
+          git clone -b RAGNARØK https://github.com/dav-quez/CyberInfintyKernel.git fuente-kernel
 
       - name: Instalar dependencias de Ubuntu
         run: |
@@ -20,7 +21,6 @@ jobs:
       - name: Desactivar KernelSU en Kconfig (Evita el Error)
         run: |
           cd fuente-kernel
-          # Comentamos la línea 258 o la que llame a kernelsu/Kconfig usando sed
           sed -i '/kernelsu\/Kconfig/s/^/#/' drivers/Kconfig
           echo "Línea de KernelSU desactivada para evitar bloqueos en el build."
 

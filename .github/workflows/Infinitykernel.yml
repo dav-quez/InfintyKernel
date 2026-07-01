@@ -12,13 +12,11 @@ jobs:
       - name: Checkout InfinityKernel
         uses: actions/checkout@v4
 
-      - name: Clone RAGNARØK kernel (stable base)
+      - name: Clone RAGNARØK kernel
         run: |
           cd /tmp
           git clone --depth=1 https://github.com/dav-quez/CyberInfintyKernel.git ragnarok-kernel
-          echo "[+] RAGNARØK kernel cloned (stable)"
-          cd ragnarok-kernel
-          git log --oneline -3
+          echo "[+] RAGNARØK cloned"
 
       - name: Install dependencies
         run: |
@@ -28,24 +26,17 @@ jobs:
             gcc-aarch64-linux-gnu device-tree-compiler \
             libssl-dev libelf-dev bc bison flex openssl
 
-      - name: Prepare source (RAGNARØK stable base)
+      - name: Prepare source
         run: |
           cd $GITHUB_WORKSPACE
           cp -r /tmp/ragnarok-kernel/* .
-          echo "[+] Using RAGNARØK as base"
+          echo "[+] Using RAGNARØK base"
 
-      - name: Fix KernelSU Kconfig conflicts
+      - name: Fix KernelSU
         run: |
           cd $GITHUB_WORKSPACE
-          
-          if [ -f drivers/Kconfig ]; then
-            sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig
-          fi
-          
-          if [ -f drivers/Makefile ]; then
-            sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile
-          fi
-          
+          [ -f drivers/Kconfig ] && sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig
+          [ -f drivers/Makefile ] && sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile
           echo "[+] KernelSU disabled"
 
       - name: Configure kernel for C2S
@@ -55,18 +46,11 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           
-          # Use RAGNARØK's c2s config (we know it works)
-          if [ -f arch/arm64/configs/c2s_defconfig ]; then
-            cp arch/arm64/configs/c2s_defconfig .config
-            echo "[+] Using c2s_defconfig"
-          else
-            echo "[-] c2s_defconfig not found!"
-            ls arch/arm64/configs/ | grep c2
-            exit 1
-          fi
+          echo "[+] Using c2s.config"
+          cp arch/arm64/configs/c2s.config .config
           
           make oldconfig < /dev/null || true
-          echo "[+] Kernel configured"
+          echo "[+] Kernel configured for C2S"
 
       - name: Compile kernel
         run: |
@@ -75,20 +59,19 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           
-          echo "[*] Compiling kernel..."
+          echo "[*] Compiling kernel... ($(nproc) jobs)"
           
-          # Compilar con jobs limitados para mejor debugging
-          if make -j4 Image dtbs 2>&1 | tee build.log; then
+          if make -j$(nproc) Image dtbs 2>&1 | tee build.log; then
             if [ -f arch/arm64/boot/Image ]; then
               echo "[+] ✅ Compilation successful!"
               ls -lh arch/arm64/boot/Image
             else
-              echo "[-] Image not found!"
+              echo "[-] Image not generated"
               tail -50 build.log
               exit 1
             fi
           else
-            echo "[-] Compilation failed!"
+            echo "[-] Compilation failed"
             grep -i "error" build.log | head -20
             exit 1
           fi
@@ -98,7 +81,7 @@ jobs:
           cd $GITHUB_WORKSPACE
           
           if [ ! -f arch/arm64/boot/Image ]; then
-            echo "[-] Image missing, cannot create ZIP"
+            echo "[-] Image not found"
             exit 1
           fi
           
@@ -107,12 +90,18 @@ jobs:
           cp arch/arm64/boot/Image $OUTDIR/
           
           cat > $OUTDIR/META-INF/com/google/android/updater-script << 'EOF'
-          ui_print("InfinityKernel One UI 8 - C2S");
+          ui_print("================================");
+          ui_print("  InfinityKernel One UI 8");
+          ui_print("  Galaxy Note 20 Ultra (C2S)");
+          ui_print("================================");
+          package_extract_file("Image");
           write_raw_image(package_extract_file("Image"), "boot");
           ui_print("✅ Installation complete!");
           EOF
           
-          cd $OUTDIR && zip -r9q ../InfinityKernel-One-UI-8-C2S.zip .
+          cd $OUTDIR
+          zip -r9q ../InfinityKernel-One-UI-8-C2S.zip .
+          
           cd ..
           ls -lh InfinityKernel-One-UI-8-C2S.zip
 
@@ -122,6 +111,18 @@ jobs:
           name: InfinityKernel-C2S
           path: InfinityKernel-One-UI-8-C2S.zip
 
-      - name: Build Complete
+      - name: Build Summary
+        if: success()
         run: |
-          echo "✅ InfinityKernel built successfully!"
+          echo ""
+          echo "╔════════════════════════════════════════════════╗"
+          echo "║    ✅ InfinityKernel Build Successful!        ║"
+          echo "╚════════════════════════════════════════════════╝"
+          echo ""
+          echo "📱 Device:        Samsung Galaxy Note 20 Ultra (C2S)"
+          echo "📦 Kernel Base:   RAGNARØK (Stable)"
+          echo "⚡ Optimizations: Overclock + Thermal + Performance"
+          echo "🎯 Target ROM:    Artisan 3.5.0 (One UI 8 / Android 16)"
+          echo ""
+          echo "📥 Download: InfinityKernel-One-UI-8-C2S.zip"
+          echo ""

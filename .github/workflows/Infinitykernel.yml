@@ -21,10 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            build-essential libarchive-tools ccache wget git \
-            gcc-aarch64-linux-gnu device-tree-compiler \
-            libssl-dev libelf-dev bc bison flex openssl
+          sudo apt-get install -y -qq build-essential libarchive-tools ccache wget git gcc-aarch64-linux-gnu device-tree-compiler libssl-dev libelf-dev bc bison flex openssl
 
       - name: Prepare source
         run: |
@@ -42,61 +39,39 @@ jobs:
       - name: Configure kernel for C2S
         run: |
           cd $GITHUB_WORKSPACE
-          
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          
-          echo "[+] Using c2s.config"
           cp arch/arm64/configs/c2s.config .config
-          
-          # Make olddefconfig - auto-assigns defaults without interactive prompts
           make olddefconfig > /dev/null 2>&1 || true
-          
-          echo "[+] Kernel configured for C2S"
+          echo "[+] Kernel configured"
 
       - name: Compile kernel
         run: |
           cd $GITHUB_WORKSPACE
-          
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          
-          echo "[*] Compiling kernel..."
-          
-          if make -j$(nproc) Image dtbs 2>&1 | tee build.log; then
-            if [ -f arch/arm64/boot/Image ]; then
-              echo "[+] ✅ Compilation successful!"
-              ls -lh arch/arm64/boot/Image
-            else
-              echo "[-] Image not generated"
-              tail -50 build.log
-              exit 1
-            fi
+          echo "[*] Compiling..."
+          make -j$(nproc) Image dtbs 2>&1 | grep -E "^(  |WRAP|CC|UPD|GEN|LD|LINK)" || true
+          if [ -f arch/arm64/boot/Image ]; then
+            echo "[+] ✅ Kernel compiled!"
+            ls -lh arch/arm64/boot/Image
           else
-            echo "[-] Build failed"
-            grep "error:" build.log | head -20
+            echo "[-] Compilation failed"
             exit 1
           fi
 
       - name: Create flashable ZIP
         run: |
           cd $GITHUB_WORKSPACE
-          
-          if [ ! -f arch/arm64/boot/Image ]; then
-            echo "[-] Image not found"
-            exit 1
-          fi
-          
+          [ ! -f arch/arm64/boot/Image ] && { echo "[-] No Image"; exit 1; }
           OUTDIR="InfinityKernel-C2S"
           mkdir -p $OUTDIR/META-INF/com/google/android
           cp arch/arm64/boot/Image $OUTDIR/
-          
           cat > $OUTDIR/META-INF/com/google/android/updater-script << 'EOF'
           ui_print("InfinityKernel One UI 8 - C2S");
           write_raw_image(package_extract_file("Image"), "boot");
-          ui_print("✅ Installation complete!");
+          ui_print("✅ Done!");
           EOF
-          
           cd $OUTDIR && zip -r9q ../InfinityKernel-One-UI-8-C2S.zip . && cd ..
           ls -lh InfinityKernel-One-UI-8-C2S.zip
 
@@ -106,6 +81,5 @@ jobs:
           name: InfinityKernel-C2S
           path: InfinityKernel-One-UI-8-C2S.zip
 
-      - name: Success
-        run: |
-          echo "✅ Build completed successfully!"
+      - name: Done
+        run: echo "✅ InfinityKernel built successfully!"

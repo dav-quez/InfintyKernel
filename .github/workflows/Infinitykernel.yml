@@ -14,10 +14,12 @@ jobs:
           cat > $GITHUB_WORKSPACE/include/linux/debug-snapshot.h << 'ENDFILE'
           #ifndef __DEBUG_SNAPSHOT_H
           #define __DEBUG_SNAPSHOT_H
-          #define dbg_snapshot_spinlock(x) do {} while (0)
-          #define dbg_snapshot_irqs_disabled(x) do {} while (0)
+          #define dbg_snapshot_spinlock(...) do {} while (0)
+          #define dbg_snapshot_irqs_disabled(...) do {} while (0)
           #define dbg_snapshot_get_hardlockup() (0)
-          #define dbg_snapshot_irq(x, y, z) do {} while (0)
+          #define dbg_snapshot_irq(...) do {} while (0)
+          #define dbg_snapshot_reg(...) do {} while (0)
+          #define dbg_snapshot_irqs(...) do {} while (0)
           #endif
           ENDFILE
       - run: cd $GITHUB_WORKSPACE && export ARCH=arm64 && export CROSS_COMPILE=aarch64-linux-gnu- && cp arch/arm64/configs/c2s.config .config && sed -i '/CONFIG_DEBUG_SNAPSHOT/d' .config && echo "# CONFIG_DEBUG_SNAPSHOT is not set" >> .config && make olddefconfig && make -j4 Image dtbs

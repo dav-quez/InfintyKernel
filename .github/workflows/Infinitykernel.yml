@@ -29,12 +29,18 @@ jobs:
           cp -r /tmp/ragnarok-kernel/* .
           echo "[+] Using RAGNARØK base"
 
-      - name: Fix KernelSU
+      - name: Fix KernelSU and debug-snapshot
         run: |
           cd $GITHUB_WORKSPACE
           [ -f drivers/Kconfig ] && sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig
           [ -f drivers/Makefile ] && sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile
-          echo "[+] KernelSU disabled"
+          
+          # Fix debug-snapshot compile error
+          if grep -q "dbg_snapshot_get_hardlockup" include/linux/debug-snapshot.h 2>/dev/null; then
+            sed -i 's/dbg_snapshot_get_hardlockup()/dbg_snapshot_get_hardlockup(void)/' include/linux/debug-snapshot.h || true
+          fi
+          
+          echo "[+] Fixes applied"
 
       - name: Configure kernel for C2S
         run: |
@@ -42,6 +48,11 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           cp arch/arm64/configs/c2s.config .config
+          
+          # Disable problematic debug options
+          sed -i '/CONFIG_DEBUG_SNAPSHOT/d' .config
+          echo "# CONFIG_DEBUG_SNAPSHOT is not set" >> .config
+          
           make olddefconfig > /dev/null 2>&1 || true
           echo "[+] Kernel configured"
 

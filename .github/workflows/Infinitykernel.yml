@@ -20,14 +20,23 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential gcc-aarch64-linux-gnu \
-            libssl-dev libelf-dev bc bison flex device-tree-compiler
+            libssl-dev libelf-dev bc bison flex device-tree-compiler zip
 
       - name: Prepare source
         run: |
           cp -r /tmp/kernel/* $GITHUB_WORKSPACE/
           cd $GITHUB_WORKSPACE
+          
+          # Desactivar referencias fantasma de KernelSU
           sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig 2>/dev/null || true
           sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile 2>/dev/null || true
+          
+          # SOLUCIÓN GPU: Copiamos el archivo térmico directo para evitar usar rutas relativas rotas
+          if [ -d drivers/gpu/arm/bv_r38p1 ]; then
+            cp drivers/gpu/arm/exynos/frontend/gpex_thermal.c drivers/gpu/arm/bv_r38p1/ 2>/dev/null || true
+            # Modificamos el Makefile de la GPU para que busque el archivo a nivel local sin alterar tabuladores
+            sed -i 's|\.\./exynos/frontend/gpex_thermal.o|gpex_thermal.o|g' drivers/gpu/arm/bv_r38p1/Makefile 2>/dev/null || true
+          fi
 
       - name: Configure kernel
         run: |
@@ -41,7 +50,7 @@ jobs:
           echo "# CONFIG_EXYNOS_SNAPSHOT is not set" >> .config
           make olddefconfig > /dev/null 2>&1 || true
 
-          # Reset debug-snapshot.h to a clean minimal stub
+          # Inicializar cabecera limpia
           cat > include/linux/debug-snapshot.h << 'ENDFILE'
           #ifndef __DEBUG_SNAPSHOT_H
           #define __DEBUG_SNAPSHOT_H
@@ -69,7 +78,7 @@ jobs:
               break
             fi
 
-            # Captura símbolos ignorando mayúsculas/minúsculas de forma robusta
+            # Extrae símbolos perdidos ignorando mayúsculas/minúsculas de forma robusta
             NEW_SYMS=$(grep -E "undeclared|implicit declaration|takes just" build.log \
               | grep -oE "([dD][bB][gG]_snapshot_[a-zA-Z0-9_]+|[eE][xX][yY][nN][oO][sS]_ss_[a-zA-Z0-9_]+|[dD][sS][sS]_[a-zA-Z0-9_]+)" \
               | sort -u)
@@ -93,12 +102,11 @@ jobs:
             fi
             PREV_COUNT=$CURRENT_COUNT
 
-            # Reconstruir debug-snapshot.h
+            # Reconstruir debug-snapshot.h dinámicamente
             {
               echo "#ifndef __DEBUG_SNAPSHOT_H"
               echo "#define __DEBUG_SNAPSHOT_H"
               for sym in $ALL_SYMS; do
-                # Solución: Usamos expr en lugar de [[ ... ]] para evitar fallos de sintaxis en el intérprete
                 if expr "$sym" : '^[A-Z0-9_]*$' >/dev/null; then
                   echo "#define $sym 0"
                 else

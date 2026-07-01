@@ -11,8 +11,6 @@ jobs:
     steps:
       - name: Checkout InfinityKernel
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Clone Artisan kernel base
         run: |
@@ -40,6 +38,24 @@ jobs:
           cp -r /tmp/artisan-kernel/* .
           echo "[+] Using Artisan One UI 8 as base"
 
+      - name: Fix KernelSU Kconfig conflicts
+        run: |
+          cd $GITHUB_WORKSPACE
+          
+          echo "[*] Disabling KernelSU to avoid Kconfig conflicts..."
+          
+          # Comment out KernelSU in drivers/Kconfig
+          if [ -f drivers/Kconfig ]; then
+            sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig
+            grep -n "kernelsu" drivers/Kconfig || echo "[+] KernelSU Kconfig disabled"
+          fi
+          
+          # Comment in drivers/Makefile
+          if [ -f drivers/Makefile ]; then
+            sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile
+            echo "[+] KernelSU Makefile disabled"
+          fi
+
       - name: Copy safe optimizations from RAGNARØK
         run: |
           cd $GITHUB_WORKSPACE
@@ -48,11 +64,11 @@ jobs:
           
           # Overclock
           [ -f /tmp/ragnarok-kernel/drivers/cpufreq/exynos-acme.c ] && \
-            cp /tmp/ragnarok-kernel/drivers/cpufreq/exynos-acme.* drivers/cpufreq/ 2>/dev/null || true
+            cp /tmp/ragnarok-kernel/drivers/cpufreq/exynos-acme.* drivers/cpufreq/ 2>/dev/null || echo "[!] exynos-acme not found"
           
           # Thermal
           [ -d /tmp/ragnarok-kernel/drivers/thermal ] && \
-            cp /tmp/ragnarok-kernel/drivers/thermal/*.c drivers/thermal/ 2>/dev/null || true
+            cp /tmp/ragnarok-kernel/drivers/thermal/*.c drivers/thermal/ 2>/dev/null || echo "[!] thermal not found"
           
           echo "[+] Optimizations copied"
 
@@ -72,12 +88,17 @@ jobs:
             echo "[+] Using c2slte.config"
           else
             echo "[-] No C2S config found!"
-            ls arch/arm64/configs/ | grep -E "(c2|exynos)"
+            ls arch/arm64/configs/ | grep -E "(c2|exynos)" || echo "Available configs:"
+            ls arch/arm64/configs/
             exit 1
           fi
           
-          make oldconfig < /dev/null || true
-          echo "[+] Kernel configured"
+          # Ensure KernelSU is disabled
+          grep -q "CONFIG_KERNELSU" .config && sed -i '/CONFIG_KERNELSU/d' .config
+          echo "# CONFIG_KERNELSU is not set" >> .config
+          
+          make oldconfig < /dev/null 2>&1 | tail -5
+          echo "[+] Kernel configured for C2S"
 
       - name: Compile kernel
         run: |
@@ -90,10 +111,10 @@ jobs:
           echo "[*] Compiling... ($(nproc) jobs)"
           if make -j$(nproc) Image dtbs 2>&1 | tee build.log; then
             echo "[+] ✅ Compilation successful!"
-            ls -lh arch/arm64/boot/Image
+            ls -lh arch/arm64/boot/Image*
           else
-            echo "[-] Compilation failed!"
-            tail -30 build.log
+            echo "[-] ❌ Compilation failed!"
+            tail -50 build.log
             exit 1
           fi
 
@@ -104,12 +125,21 @@ jobs:
           OUTDIR="InfinityKernel-C2S"
           mkdir -p $OUTDIR/META-INF/com/google/android
           
+          if [ ! -f arch/arm64/boot/Image ]; then
+            echo "[-] Image not found!"
+            exit 1
+          fi
+          
           cp arch/arm64/boot/Image $OUTDIR/
           
           cat > $OUTDIR/META-INF/com/google/android/updater-script << 'EOF'
-          ui_print("InfinityKernel One UI 8 - C2S");
+          ui_print("================================");
+          ui_print("InfinityKernel One UI 8 Edition");
+          ui_print("RAGNARØK Optimizations + Artisan");
+          ui_print("================================");
+          package_extract_file("Image");
           write_raw_image(package_extract_file("Image"), "boot");
-          ui_print("Installation complete!");
+          ui_print("✅ Installation complete!");
           EOF
           
           cd $OUTDIR
@@ -124,10 +154,18 @@ jobs:
           name: InfinityKernel-C2S
           path: InfinityKernel-One-UI-8-C2S.zip
 
-      - name: Summary
+      - name: Build Summary
         if: success()
         run: |
-          echo "✅ Build completed!"
-          echo "📱 Device: Note 20 Ultra (C2S)"
-          echo "📦 ROM: Artisan 3.5.0 (One UI 8)"
-          echo "⚡ Kernel: InfinityKernel with RAGNARØK optimizations"
+          echo ""
+          echo "╔════════════════════════════════════════════════╗"
+          echo "║    ✅ InfinityKernel Build Successful!        ║"
+          echo "╚════════════════════════════════════════════════╝"
+          echo ""
+          echo "📱 Device:        Samsung Galaxy Note 20 Ultra (C2S)"
+          echo "📦 ROM:           Artisan 3.5.0 (One UI 8 / Android 16)"
+          echo "⚡ Optimizations: RAGNARØK (Overclock + Thermal)"
+          echo "🔧 Kernel Base:   Artisan (BPF-compatible)"
+          echo ""
+          echo "📥 Download the kernel from Actions artifacts"
+          echo ""

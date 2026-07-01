@@ -31,14 +31,9 @@ jobs:
           sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig 2>/dev/null || true
           sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile 2>/dev/null || true
           
-          # SOLUCIÓN GPU: Copiamos el archivo térmico directo para evitar usar rutas relativas rotas
+          # Fix del Makefile de la GPU
           if [ -d drivers/gpu/arm/bv_r38p1 ]; then
             cp drivers/gpu/arm/exynos/frontend/gpex_thermal.c drivers/gpu/arm/bv_r38p1/ 2>/dev/null || true
-            
-            # Forzamos a gpex_thermal.c a incluir la cabecera de debug-snapshot para que use nuestros stubs
-            sed -i '1i #include <linux/debug-snapshot.h>' drivers/gpu/arm/bv_r38p1/gpex_thermal.c
-            
-            # Modificamos el Makefile de la GPU para que busque el archivo a nivel local
             sed -i 's|\.\./exynos/frontend/gpex_thermal.o|gpex_thermal.o|g' drivers/gpu/arm/bv_r38p1/Makefile 2>/dev/null || true
           fi
 
@@ -75,33 +70,61 @@ jobs:
             echo "=== Compile attempt $i/$MAX_TRIES ==="
             echo "=============================="
             
-            make -j$(nproc) Image dtbs 2>&1 | tee build.log | tail -n 40
+            # Aumentamos el registro de salida a 100 líneas para no perder los errores del linker
+            make -j$(nproc) Image dtbs 2>&1 | tee build.log | tail -n 100
 
             if [ -f arch/arm64/boot/Image ]; then
               echo "[+] ✅ Build succeeded on attempt $i"
               break
             fi
 
-            # Extrae símbolos perdidos de los logs (tanto en compilación como de enlazado "undefined reference")
+            EXISTING=$(grep '^#define' include/linux/debug-snapshot.h 2>/dev/null | sed 's/#define //;s/(.*//' | sort -u)
             NEW_SYMS=$(grep -E "undeclared|implicit declaration|takes just|undefined reference to" build.log \
               | grep -oE "([dD][bB][gG]_snapshot_[a-zA-Z0-9_]+|[eE][xX][yY][nN][oO][sS]_ss_[a-zA-Z0-9_]+|[dD][sS][sS]_[a-zA-Z0-9_]+)" \
               | sort -u)
 
             if [ -z "$NEW_SYMS" ]; then
               echo "[-] Build failed but no more debug-snapshot symbols found."
-              echo "=== Last 80 lines of build.log ==="
-              tail -80 build.log
+              echo "=== Last 150 lines of build.log ==="
+              tail -150 build.log
               exit 1
             fi
 
-            EXISTING=$(grep '^#define' include/linux/debug-snapshot.h 2>/dev/null | sed 's/#define //;s/(.*//' | sort -u)
+            # ---------------------------------------------------------
+            # CIRUGÍA DINÁMICA: Buscar código infractor y forzar recompilación
+            # ---------------------------------------------------------
+            for sym in $NEW_SYMS; do
+              # Si ya tratamos este símbolo, lo saltamos
+              if echo "$EXISTING" | grep -q "^$sym$"; then continue; fi
+              
+              echo "[*] Cacería de archivos fuente para el símbolo: $sym"
+              # Busca todos los .c en los drivers que contengan el símbolo fallido
+              AFFECTED_FILES=$(find drivers arch kernel include -type f -name "*.c" 2>/dev/null | xargs -r grep -l "$sym" 2>/dev/null || true)
+              
+              for f in $AFFECTED_FILES; do
+                # Inyectar el include si no lo tiene
+                if ! grep -q "linux/debug-snapshot.h" "$f"; then
+                  echo "[+] Inyectando cabecera en: $f"
+                  sed -i '1i #include <linux/debug-snapshot.h>' "$f"
+                fi
+                
+                # Borrar el archivo .o para obligar a Make a recompilar este archivo específico
+                O_FILE="${f%.c}.o"
+                if [ -f "$O_FILE" ]; then
+                  echo "[+] Borrando $O_FILE para forzar la recompilación..."
+                  rm -f "$O_FILE"
+                fi
+              done
+            done
+            # ---------------------------------------------------------
+
             ALL_SYMS=$(printf "%s\n%s\n" "$EXISTING" "$NEW_SYMS" | sort -u | sed '/^$/d')
 
             CURRENT_COUNT=$(echo "$ALL_SYMS" | wc -l)
             if [ "$CURRENT_COUNT" -eq "$PREV_COUNT" ]; then
               echo "[-] No progress made (same symbols repeating), stopping."
-              echo "=== Last 80 lines of build.log ==="
-              tail -80 build.log
+              echo "=== Last 150 lines of build.log ==="
+              tail -150 build.log
               exit 1
             fi
             PREV_COUNT=$CURRENT_COUNT

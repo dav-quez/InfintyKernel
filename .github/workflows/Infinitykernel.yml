@@ -16,7 +16,6 @@ jobs:
         run: |
           cd /tmp
           git clone --depth=1 https://github.com/dav-quez/CyberInfintyKernel.git ragnarok-kernel
-          echo "[+] RAGNARØK cloned"
 
       - name: Install dependencies
         run: |
@@ -27,26 +26,26 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE
           cp -r /tmp/ragnarok-kernel/* .
-          echo "[+] Using RAGNARØK base"
 
-      - name: Fix kernel issues
+      - name: Fix kernel
         run: |
           cd $GITHUB_WORKSPACE
-          
-          # Fix KernelSU
           [ -f drivers/Kconfig ] && sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig
           [ -f drivers/Makefile ] && sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile
           
-          # Fix debug-snapshot conflicts
+          # Remove debug-snapshot completely to avoid conflicts
           if [ -f include/linux/debug-snapshot.h ]; then
-            cp include/linux/debug-snapshot.h include/linux/debug-snapshot.h.bak
-            grep -v "dbg_snapshot_get_hardlockup" include/linux/debug-snapshot.h.bak > include/linux/debug-snapshot.h
-            echo "static inline int dbg_snapshot_get_hardlockup(void) { return 0; }" >> include/linux/debug-snapshot.h
-          fi
+            cat > include/linux/debug-snapshot.h << 'ENDHEADER'
+          #ifndef __DEBUG_SNAPSHOT_H
+          #define __DEBUG_SNAPSHOT_H
           
-          echo "[+] All fixes applied"
+          static inline int dbg_snapshot_get_hardlockup(void) { return 0; }
+          
+          #endif
+          ENDHEADER
+          fi
 
-      - name: Configure kernel for C2S
+      - name: Configure kernel
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
@@ -55,30 +54,22 @@ jobs:
           sed -i '/CONFIG_DEBUG_SNAPSHOT/d' .config
           echo "# CONFIG_DEBUG_SNAPSHOT is not set" >> .config
           make olddefconfig > /dev/null 2>&1 || true
-          echo "[+] Kernel configured"
 
       - name: Compile kernel
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          echo "[*] Compiling..."
-          if make -j$(nproc) Image dtbs 2>&1 | tail -20; then
-            if [ -f arch/arm64/boot/Image ]; then
-              echo "[+] ✅ Kernel compiled!"
-              ls -lh arch/arm64/boot/Image
-            else
-              echo "[-] Image not found"
-              exit 1
-            fi
-          else
+          make -j$(nproc) Image dtbs > /dev/null 2>&1
+          if [ ! -f arch/arm64/boot/Image ]; then
+            echo "Compilation failed"
             exit 1
           fi
+          ls -lh arch/arm64/boot/Image
 
       - name: Create flashable ZIP
         run: |
           cd $GITHUB_WORKSPACE
-          [ ! -f arch/arm64/boot/Image ] && exit 1
           OUTDIR="InfinityKernel-C2S"
           mkdir -p $OUTDIR/META-INF/com/google/android
           cp arch/arm64/boot/Image $OUTDIR/
@@ -95,6 +86,3 @@ jobs:
         with:
           name: InfinityKernel-C2S
           path: InfinityKernel-One-UI-8-C2S.zip
-
-      - name: Done
-        run: echo "✅ InfinityKernel built successfully!"

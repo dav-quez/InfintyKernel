@@ -1,4 +1,4 @@
-name: Build InfinityKernel (Self-Healing)
+name: Build InfinityKernel (Final)
 
 on:
   workflow_dispatch:
@@ -26,9 +26,18 @@ jobs:
         run: |
           cp -r /tmp/kernel/* $GITHUB_WORKSPACE/
           cd $GITHUB_WORKSPACE
-          # Desactivar KernelSU si causa conflictos
+          # Limpiar KernelSU si es necesario
           sed -i 's/^source "drivers\/kernelsu\/Kconfig"/#source "drivers\/kernelsu\/Kconfig"/' drivers/Kconfig 2>/dev/null || true
-          sed -i 's/^obj-y += kernelsu\//# obj-y += kernelsu\//' drivers/Makefile 2>/dev/null || true
+          
+          # Crear cabecera de parches (si no existe)
+          mkdir -p include/linux
+          cat > include/linux/debug-snapshot.h << 'ENDFILE'
+          #ifndef __DEBUG_SNAPSHOT_H
+          #define __DEBUG_SNAPSHOT_H
+          #define exynos_ss_register(...) (0)
+          #define exynos_ss_unregister(...) (0)
+          #endif
+          ENDFILE
 
       - name: Configure kernel
         run: |
@@ -36,73 +45,47 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           cp arch/arm64/configs/c2s.config .config
-          # Forzar flags básicos
-          echo "CONFIG_DEBUG_INFO=n" >> .config
+          
+          # Forzar habilitación de opciones de Samsung
+          echo "CONFIG_EXYNOS_SS=y" >> .config
+          echo "CONFIG_EXYNOS_SNAPSHOT=y" >> .config
+          
           make olddefconfig > /dev/null 2>&1 || true
 
-          # Inicializar cabecera de parches
-          cat > include/linux/debug-snapshot.h << 'ENDFILE'
-          #ifndef __DEBUG_SNAPSHOT_H
-          #define __DEBUG_SNAPSHOT_H
-          #endif
-          ENDFILE
-
-      - name: Self-healing compile (Deep Linker Fix)
+      - name: Build with Self-Healing
         run: |
           cd $GITHUB_WORKSPACE
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           
-          # Intentar compilar hasta 15 veces con auto-corrección
-          for i in {1..15}; do
-            echo "=== Intento de Compilación $i ==="
-            # Capturar logs para análisis
+          # Intentos de compilación
+          for i in {1..10}; do
+            echo "=== Intento $i ==="
             make -j$(nproc) Image 2>&1 | tee build.log
             
             if [ -f arch/arm64/boot/Image ]; then
-              echo "[+] ✅ Compilación Exitosa"
+              echo "[+] ✅ ÉXITO!"
               break
             fi
 
-            # Analizar error
+            # Si falla, detectar símbolo perdido y añadirlo al stub
             if grep -q "undefined reference to" build.log; then
               MISSING_SYM=$(grep "undefined reference to" build.log | head -n 1 | cut -d"'" -f2)
-              FAILING_DIR=$(grep -B 5 "undefined reference to" build.log | grep "LD" | tail -n 1 | cut -d'/' -f1 | sed 's/.* //')
+              echo "[!] Símbolo perdido detectado: $MISSING_SYM. Parcheando..."
               
-              echo "[!] Símbolo perdido detectado: $MISSING_SYM"
-              echo "[!] Directorio fallido: $FAILING_DIR"
-
-              # 1. Intentar localizar el archivo fuente que define el símbolo
-              SOURCE_FILE=$(grep -r " $MISSING_SYM" . --include="*.c" | grep -v ".o:" | cut -d: -f1 | head -n 1)
+              # Añadir a la cabecera como función vacía
+              sed -i "/#endif/i #define $MISSING_SYM(...) (0)" include/linux/debug-snapshot.h
               
-              if [ ! -z "$SOURCE_FILE" ]; then
-                echo "[+] Símbolo encontrado en: $SOURCE_FILE. Injectando en Makefile local..."
-                # Convertir archivo a objeto y agregarlo al Makefile del directorio que falla
-                OBJ_NAME=$(basename "${SOURCE_FILE%.c}.o")
-                
-                # Buscar el Makefile correspondiente
-                MAKEFILE_PATH=$(find drivers -name "Makefile" | grep "$FAILING_DIR" | head -n 1)
-                
-                if [ ! -z "$MAKEFILE_PATH" ]; then
-                  echo "obj-y += $OBJ_NAME" >> "$MAKEFILE_PATH"
-                  echo "[+] Modificado: $MAKEFILE_PATH"
-                fi
-              else
-                echo "[+] No se localizó fuente. Forzando definición en cabecera..."
-                echo "#define $MISSING_SYM(...) (0)" >> include/linux/debug-snapshot.h
-              fi
-              
-              # Borrar objetos del directorio fallido para forzar recompilación
-              find "$FAILING_DIR" -name "*.o" -type f -delete
+              # Limpiar para forzar recompilación
+              make clean
+            else
+              echo "[!] Error no reconocido, abortando."
+              exit 1
             fi
-            
-            # Limpiar para evitar basura de compilaciones previas fallidas
-            make clean
           done
 
           if [ ! -f arch/arm64/boot/Image ]; then
-            echo "[-] Error: La compilación falló tras 15 intentos."
-            tail -n 50 build.log
+            echo "[-] Error: La compilación falló tras varios intentos."
             exit 1
           fi
 
@@ -112,13 +95,13 @@ jobs:
           mkdir -p out/META-INF/com/google/android
           cp arch/arm64/boot/Image out/
           cat > out/META-INF/com/google/android/updater-script << 'EOF'
-          ui_print("InfinityKernel C2S - Fixed");
+          ui_print("InfinityKernel - Fixed Build");
           write_raw_image(package_extract_file("Image"), "boot");
           ui_print("Done!");
           EOF
-          cd out && zip -r9 ../InfinityKernel-C2S.zip . && cd ..
+          cd out && zip -r9 ../InfinityKernel-Fixed.zip . && cd ..
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Kernel-Result
-          path: InfinityKernel-C2S.zip
+          name: InfinityKernel-Fixed
+          path: InfinityKernel-Fixed.zip

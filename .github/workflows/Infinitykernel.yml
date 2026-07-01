@@ -49,7 +49,9 @@ jobs:
           echo "[+] Using c2s.config"
           cp arch/arm64/configs/c2s.config .config
           
-          make oldconfig < /dev/null || true
+          # Make olddefconfig - auto-assigns defaults without interactive prompts
+          make olddefconfig > /dev/null 2>&1 || true
+          
           echo "[+] Kernel configured for C2S"
 
       - name: Compile kernel
@@ -59,7 +61,7 @@ jobs:
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           
-          echo "[*] Compiling kernel... ($(nproc) jobs)"
+          echo "[*] Compiling kernel..."
           
           if make -j$(nproc) Image dtbs 2>&1 | tee build.log; then
             if [ -f arch/arm64/boot/Image ]; then
@@ -71,8 +73,8 @@ jobs:
               exit 1
             fi
           else
-            echo "[-] Compilation failed"
-            grep -i "error" build.log | head -20
+            echo "[-] Build failed"
+            grep "error:" build.log | head -20
             exit 1
           fi
 
@@ -90,19 +92,12 @@ jobs:
           cp arch/arm64/boot/Image $OUTDIR/
           
           cat > $OUTDIR/META-INF/com/google/android/updater-script << 'EOF'
-          ui_print("================================");
-          ui_print("  InfinityKernel One UI 8");
-          ui_print("  Galaxy Note 20 Ultra (C2S)");
-          ui_print("================================");
-          package_extract_file("Image");
+          ui_print("InfinityKernel One UI 8 - C2S");
           write_raw_image(package_extract_file("Image"), "boot");
           ui_print("✅ Installation complete!");
           EOF
           
-          cd $OUTDIR
-          zip -r9q ../InfinityKernel-One-UI-8-C2S.zip .
-          
-          cd ..
+          cd $OUTDIR && zip -r9q ../InfinityKernel-One-UI-8-C2S.zip . && cd ..
           ls -lh InfinityKernel-One-UI-8-C2S.zip
 
       - name: Upload kernel
@@ -111,18 +106,6 @@ jobs:
           name: InfinityKernel-C2S
           path: InfinityKernel-One-UI-8-C2S.zip
 
-      - name: Build Summary
-        if: success()
+      - name: Success
         run: |
-          echo ""
-          echo "╔════════════════════════════════════════════════╗"
-          echo "║    ✅ InfinityKernel Build Successful!        ║"
-          echo "╚════════════════════════════════════════════════╝"
-          echo ""
-          echo "📱 Device:        Samsung Galaxy Note 20 Ultra (C2S)"
-          echo "📦 Kernel Base:   RAGNARØK (Stable)"
-          echo "⚡ Optimizations: Overclock + Thermal + Performance"
-          echo "🎯 Target ROM:    Artisan 3.5.0 (One UI 8 / Android 16)"
-          echo ""
-          echo "📥 Download: InfinityKernel-One-UI-8-C2S.zip"
-          echo ""
+          echo "✅ Build completed successfully!"

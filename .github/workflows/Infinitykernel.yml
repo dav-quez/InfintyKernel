@@ -34,7 +34,11 @@ jobs:
           # SOLUCIÓN GPU: Copiamos el archivo térmico directo para evitar usar rutas relativas rotas
           if [ -d drivers/gpu/arm/bv_r38p1 ]; then
             cp drivers/gpu/arm/exynos/frontend/gpex_thermal.c drivers/gpu/arm/bv_r38p1/ 2>/dev/null || true
-            # Modificamos el Makefile de la GPU para que busque el archivo a nivel local sin alterar tabuladores
+            
+            # Forzamos a gpex_thermal.c a incluir la cabecera de debug-snapshot para que use nuestros stubs
+            sed -i '1i #include <linux/debug-snapshot.h>' drivers/gpu/arm/bv_r38p1/gpex_thermal.c
+            
+            # Modificamos el Makefile de la GPU para que busque el archivo a nivel local
             sed -i 's|\.\./exynos/frontend/gpex_thermal.o|gpex_thermal.o|g' drivers/gpu/arm/bv_r38p1/Makefile 2>/dev/null || true
           fi
 
@@ -78,8 +82,8 @@ jobs:
               break
             fi
 
-            # Extrae símbolos perdidos ignorando mayúsculas/minúsculas de forma robusta
-            NEW_SYMS=$(grep -E "undeclared|implicit declaration|takes just" build.log \
+            # Extrae símbolos perdidos de los logs (tanto en compilación como de enlazado "undefined reference")
+            NEW_SYMS=$(grep -E "undeclared|implicit declaration|takes just|undefined reference to" build.log \
               | grep -oE "([dD][bB][gG]_snapshot_[a-zA-Z0-9_]+|[eE][xX][yY][nN][oO][sS]_ss_[a-zA-Z0-9_]+|[dD][sS][sS]_[a-zA-Z0-9_]+)" \
               | sort -u)
 

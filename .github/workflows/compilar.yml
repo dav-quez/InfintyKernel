@@ -23,15 +23,16 @@ jobs:
           sed -i '/kernelsu\/Kconfig/s/^/#/' drivers/Kconfig
           echo "Línea de KernelSU desactivada para evitar bloqueos en el build."
 
-      - name: Corregir Ruta Térmica de la GPU (Fix gpex_thermal)
+      - name: Parchear Makefile de la GPU (Fix gpex_thermal relativo)
         run: |
           cd fuente-kernel
-          echo "Creando parches de rutas para el compilador..."
-          # Forzamos la creación de la ruta que el Makefile de la GPU espera encontrar
-          mkdir -p drivers/gpu/arm/exynos/frontend
-          cp drivers/gpu/arm/exynos/frontend/gpex_thermal.c drivers/gpu/arm/bv_r38p1/gpex_thermal.c 2>/dev/null || true
-          # Enlazamos de forma absoluta para blindar el sub-make
-          ln -s /home/runner/work/InfintyKernel/InfintyKernel/fuente-kernel/drivers/gpu/arm/exynos /home/runner/work/InfintyKernel/InfintyKernel/fuente-kernel/drivers/gpu/arm/exynos
+          echo "Corrigiendo la ruta rota en el Makefile de la GPU..."
+          # Reemplazamos la ruta térmica relativa por una ruta que el compilador sí pueda resolver desde el árbol principal
+          if [ -f drivers/gpu/arm/bv_r38p1/Makefile ]; then
+            sed -i 's|\.\./exynos/frontend/gpex_thermal.o|../exynos/frontend/gpex_thermal.o|g' drivers/gpu/arm/bv_r38p1/Makefile
+            # Por si acaso el script de compilación requiere la ruta absoluta interna del kernel:
+            sed -i 's|../exynos/frontend/gpex_thermal.o|$(srctree)/drivers/gpu/arm/exynos/frontend/gpex_thermal.o|g' drivers/gpu/arm/bv_r38p1/Makefile
+          fi
 
       - name: Inyectar u Optimizar Overclock
         run: |
